@@ -1,4 +1,7 @@
 # Generating Polar Histograms for each DGP in Singapore
+
+![Visuals](https://github.com/RyanTanYiWei/PolarHistogramSG/blob/main/OutputVisuals/byEntropy11x5_sample.jpeg)
+
 <b>Description</b>
 
 Street Networks support a wide range of urban processes and often describe the environmental, economic, demographic and social dimensions of urban livelihood. This analysis looks into the geometric orientation of Singapore's street networks - examining the spatial logic and order of the different configurations of our 55 planning areas (URA Master Plan 19).
