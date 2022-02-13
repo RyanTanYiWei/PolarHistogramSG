@@ -1,6 +1,6 @@
 # Generating Polar Histograms for each DGP in Singapore
 
-![Visuals](https://github.com/RyanTanYiWei/PolarHistogramSG/blob/main/OutputVisuals/byEntropy11x5_sample.jpeg)
+![Visuals](https://github.com/RyanTanYiWei/PolarHistogramSG/blob/main/OutputVisuals/byEntropy5x11_sample.jpeg)
 
 <b>Description</b>
 
