@@ -1,0 +1,470 @@
+---
+title: "Untitled"
+output: html_document
+---
+
+#Spatial Configuration of Singapore's Street Networks
+
+Street Networks support a wide range of urban processes
+
+Likwise 
+
+Geometric orientation
+
+This data visualization 
+
+
+Traffic Patterns and Travel Behaviour
+Social Logic
+
+
+This visualization was inspired by Geoff Boeing, where he conceptualized the use of a polar histogram to compare orientations of streets in cities around the works. The polar histogram charts out the frequencies of streets at different angles. For Instance, a cross (+) appearance would imply a grid-like street network structure. This methodology was recreated in R and applied it to street network data to analyze the difference in spatial configurations within the 55 planning boundaries in Singapore (MP19). The analysis accounts for a multi-modal street network and the number of line segments is shown on the number to the right of each name.
+
+This analysis sought
+This experiment, not only serves as an idea for me to think about, but also intends to capture the aesthetics of our local streets in a rather unorthodox form.
+
+
+Clear 
+```{r}
+rm(list = ls())
+```
+
+
+```{r}
+library(grid)
+library(png)
+library(magick)
+library(tidyverse)
+library(dplyr)
+
+#spatial
+library(rgdal)
+library(sp)
+library(spdplyr)
+library(raster)
+library(terra)
+library(sf)
+library(rgeos)
+```
+
+
+```{r}
+#read network (elect boundaries)
+snet = readOGR("snet (labelled zones)_final_Elec_DGP.mif", verbose = FALSE)
+
+
+#read boundary
+#bound = readOGR("boundary.mif", verbose = FALSE)
+
+#plot test
+#plot(bound)
+#plot(snet,add= TRUE, col= "Red")
+#--plot(snet)
+```
+
+
+
+#Break Singapore Map into PLots
+
+```{r}
+#get list of zones
+snet.df = as.data.frame(snet)
+zonelists = unique(snet.df$PLN_AREA_N)
+zonelists
+
+#remove empty zone
+zonelist = zonelists[zonelists != ""]
+zonelist = zonelist[order(zonelist)]
+zonelines = c()
+
+for (zone in zonelist){
+  entry = snet %>% filter(PLN_AREA_N == zone)
+  zonelines = c(zonelines, entry)
+}
+
+#zonelines
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Function: Matrix functions for Angle Calculation
+```{r}
+lengt = function(c){
+  (((c[1,1]-c[1,2])^2) + ((c[2,1]-c[2,2])^2))^0.5
+}
+angle = function(c){
+  x1 = c[1,1]
+  x2 = c[2,1]
+  y1 = c[1,2]
+  y2 = c[2,2]
+  atan2(x2-x1,y1-y2)
+}
+```
+
+Function: Calculate Dataframe for Angles
+,1 = x    ,2 = y
+```{r}
+
+calculate = function(snet){
+  #test 1 coordinate
+  #snet@lines[[4655]]@Lines[[1]]@coords
+  
+  no.feat = nrow(as.data.frame(snet))
+  len = c()
+  ang = c()
+  no = c(1:no.feat)
+  
+  for (i in 1:no.feat){
+    z = snet@lines[[i]]@Lines[[1]]@coords
+    len = c(len, lengt(z))
+    
+    #Change angle to b
+    a = as.double(paste(angle(z)))
+    a = ( (a * 180) / (pi) ) + 90
+    if (a>360){
+      a = a-360
+    }
+    if (a<0){
+      a = -a
+    }
+    ang = c(ang, a)
+  }
+  
+  df = data.frame(no,len,ang)
+  #df %>% arrange(rev(ang))
+  #df %>% arrange(ang)
+  
+  
+  #mirror across
+  df1 = df
+  ang = sapply(df1$ang+180, function (x) ifelse(x>=355,x-360,x))
+  df2 = data.frame(no,len,ang)
+  df3 = rbind(df1,df2)
+  
+  #df3 %>% arrange(rev(ang))
+  #df3 %>% arrange(ang)
+  return(df3)
+}
+```
+
+Compile Data and Process Angles for each network
+```{r}
+alldata = data.frame()
+
+for (i in 1:length(zonelines)){
+  lines = zonelines[[i]]
+  dataline = calculate(lines)
+  dataline$name = zonelist[i]
+  alldata = rbind(alldata,dataline)
+}
+
+#plotrose(calculate(zonelines[[16]]))
+```
+
+Binning and Calculations
+```{r}
+#e = alldata%>%filter(name == zonelist[1])%>% arrange(ang)
+
+#break all data into bins
+alldata$bin <- cut(alldata$ang, breaks = seq(0, 360, by = 10), labels = 0:35)
+
+#create df to store metrics
+metrics = data.frame(DGP = zonelist, Ho = NaN, Hw = NaN, phi = NaN)
+
+for (x in 1:length(zonelist)){
+  loc =  zonelist[x]
+
+  #filter all data by zones
+  e = alldata %>% filter(name == loc)
+  
+  #compute data
+  total_street =  nrow(e)
+  total_length = sum(e$len)
+  
+  print(paste0(loc,total_street))
+  Ho = 0
+  Hw = 0 
+  for (i in 0:35){
+    #calculate PROPORTION of this orientation Ho
+    P_o = nrow(e %>% filter(bin == i)) / total_street
+    H_o = P_o * log(P_o)
+    #replace NaN with 0 : bin is not occupied at all
+    H_o = replace(H_o, is.na(H_o), 0)
+    Ho = Ho - H_o
+    
+    #calculate PROPORTION of weighted orientation(by length)
+    P_w = sum(e %>% filter(bin == i) %>% .$len) / total_length
+    H_w = P_w * log(P_w)
+    H_w = replace(H_w, is.na(H_w), 0)
+    Hw = Hw - H_w
+  }
+  
+  #input metrics
+  metrics[x,]$Ho = Ho
+  metrics[x,]$Hw = Hw
+  Hmax = log(36)
+  Hg = log(4)
+  metrics[x,]$phi = 1 - ( (Ho - Hg)/ (Hmax - Hg) )^2
+}
+metrics %>% arrange(desc(phi))
+order = metrics %>% arrange(desc(phi)) %>% .$DGP
+
+```
+
+Function: Plot Rose Diagram
+```{r}
+plotrose = function(df3){
+  ggplot(df3, aes(x = ang)) +
+    geom_histogram(binwidth = 10, boundary = 0, fill = 'lightblue', color= 'black', closed = "right") +
+    scale_x_continuous(breaks=seq(0,360,90), limits=c(0,360),
+                       labels = c("","/N", "/W", "/S", "E")) +
+    coord_polar(theta="x", start=3*pi/2, direction=-1) +
+    xlab(NULL)+ylab(NULL) +
+    theme(axis.text.y = element_blank(),
+          axis.ticks.y = element_blank()) +
+    #theme_bw()
+    
+     theme(axis.text = element_text(size = rel(0.7)),
+           axis.ticks = element_line(colour = "black"),
+           legend.key = element_rect(colour = "grey80"),
+           panel.background = element_rect(fill = "white", colour = NA),
+           panel.border = element_rect(fill = NA, colour = "grey50"),
+           panel.grid.major = element_line(colour = "grey90", size = 0.2),
+           panel.grid.minor = element_line(colour = "grey98", size = 0.5),
+           strip.background = element_rect(fill = "grey80", colour = "grey50"))+ggtitle(paste0(df3$name[1]," | ",nrow(df3)/2))
+}
+seq(0,360,90)
+plotrose(alldata%>%filter(name == order[50]))
+```
+
+
+Function: Plot Rose Diagram
+```{r}
+plotrose = function(df3){
+  ggplot(df3, aes(x = ang)) +
+  geom_histogram(breaks = ((0:36 - 0.5)/36 * 360), fill = 'lightblue', color= 'black', closed = "right") +
+  scale_x_continuous(
+    breaks = 0:3/4*360, 
+    labels = c("N", "E", "S", "W")
+    
+    ) +
+  coord_polar(start=-pi/36) +
+    
+    xlab(NULL)+ylab(NULL) +
+    theme(axis.text.y = element_blank(),
+          axis.ticks.y = element_blank()) +
+    #theme_bw()
+    
+     theme(axis.text = element_text(size = rel(0.7)),
+           axis.ticks = element_line(colour = "black"),
+           legend.key = element_rect(colour = "grey80"),
+           panel.background = element_rect(fill = "white", colour = NA),
+           panel.border = element_rect(fill = NA, colour = "grey50"),
+           panel.grid.major = element_line(colour = "grey90", size = 0.2),
+           panel.grid.minor = element_line(colour = "grey98", size = 0.5),
+           strip.background = element_rect(fill = "grey80", colour = "grey50"))+ggtitle(paste0(df3$name[1]," | ",nrow(df3)/2))
+}
+
+#plotrose(alldata%>%filter(name == order[1]))
+```
+
+Function: Plot Singapore Rose Diagram
+```{r}
+plotsg = function(df3){
+  ggplot(df3, aes(x = ang)) +
+  geom_histogram(breaks = ((0:36 - 0.5)/36 * 360), fill = 'lightblue', color= 'black', closed = "right") +
+  scale_x_continuous(
+    breaks = 0:3/4*360, 
+    labels = c("N", "E", "S", "W")
+    ) +
+    
+  coord_polar(start=-pi/36) +
+    
+    xlab(NULL)+ylab(NULL) +
+    theme(axis.text.y = element_blank(),
+          axis.ticks.y = element_blank()) +
+    #theme_bw()
+    
+     theme(axis.text = element_text(size = rel(0.7)),
+           axis.ticks = element_line(colour = "black"),
+           legend.key = element_rect(colour = "grey80"),
+           panel.background = element_rect(fill = "white", colour = NA),
+           panel.border = element_rect(fill = NA, colour = "grey50"),
+           panel.grid.major = element_line(colour = "grey90", size = 0.2),
+           panel.grid.minor = element_line(colour = "grey98", size = 0.5),
+           strip.background = element_rect(fill = "grey80", colour = "grey50"))+ggtitle(paste0("SINGAPORE | ",nrow(df3)/2))
+}
+
+#plotsg(alldata)
+```
+
+Function: Plot Singapore Rose Diagram (remove Singapore's tix)
+```{r}
+plotsgs = function(df3){
+  ggplot(df3, aes(x = ang)) +
+  geom_histogram(breaks = ((0:36 - 0.5)/36 * 360), fill = 'lightblue', color= 'black', closed = "right") +
+  scale_x_continuous(
+    breaks = 0:3/4*360, 
+    labels = c("N", "E", "S", "W")
+    ) +
+    
+    coord_polar(start=-pi/36) +
+    
+    xlab(NULL)+ylab(NULL) +
+    theme(axis.text.y = element_blank(),
+          axis.ticks.y = element_blank(),
+          axis.ticks.x = element_blank(),
+          axis.text.x = element_blank()) +
+    #theme_bw()
+    
+     theme(axis.text = element_text(size = rel(0.7)),
+           axis.ticks = element_line(colour = "black"),
+           legend.key = element_rect(colour = "grey80"),
+           panel.background = element_rect(fill = "white", colour = NA),
+           panel.border = element_rect(fill = NA, colour = "grey50"),
+           panel.grid.major = element_line(colour = "grey90", size = 0.2),
+           panel.grid.minor = element_line(colour = "grey98", size = 0.5),
+           strip.background = element_rect(fill = "grey80", colour = "grey50"))+ggtitle(paste0("SINGAPORE | ",nrow(df3)/2))
+}
+
+```
+
+Function: Plot Singapore Rose Diagram (EMPTY PLOT)
+```{r}
+plot_empty = function(df3){
+  ggplot(df3, aes(x = ang)) +
+    geom_histogram(binwidth = 10, boundary = 0, fill = 'lightblue', color= 'black', closed = "right") +
+    scale_x_continuous(breaks=seq(0,360,90), limits=c(0,360)) +
+    coord_polar(theta="x", start=3*pi/2, direction=-1) +
+    xlab(NULL)+ylab(NULL) +
+    theme(axis.text.y = element_blank(),
+          axis.ticks.y = element_blank(),
+          axis.ticks.x = element_blank(),
+          axis.text.x = element_blank()) +
+    #theme_bw()
+    
+     theme(axis.text = element_text(size = rel(0.7)),
+           axis.ticks = element_line(colour = "black"),
+           legend.key = element_rect(colour = "grey80"),
+           panel.background = element_rect(fill = "white", colour = NA),
+           panel.border = element_rect(fill = NA, colour = "grey50"),
+           panel.grid.major = element_line(colour = "grey90", size = 0.2),
+           panel.grid.minor = element_line(colour = "grey98", size = 0.5),
+           strip.background = element_rect(fill = "grey80", colour = "grey50"))+ggtitle(paste0("NORTH-EASTERN ISLANDS | ",nrow(df3)/2))
+}
+plot_empty(alldata%>%filter(name == zonelist[55]))
+```
+
+Plot Everything
+```{r}
+library(ggpubr)
+
+p1 = plotrose(alldata%>%filter(name == order[1]))
+p2 = plotrose(alldata%>%filter(name == order[2]))
+p3 = plotrose(alldata%>%filter(name == order[3]))
+p4 = plotrose(alldata%>%filter(name == order[4]))
+p5 = plotrose(alldata%>%filter(name == order[5]))
+p6 = plotrose(alldata%>%filter(name == order[6]))
+p7 = plotrose(alldata%>%filter(name == order[7]))
+p8 = plotrose(alldata%>%filter(name == order[8]))
+p9 = plotrose(alldata%>%filter(name == order[9]))
+p10 = plotrose(alldata%>%filter(name == order[10]))
+
+p11 = plotrose(alldata%>%filter(name == order[11]))
+p12 = plotrose(alldata%>%filter(name == order[12]))
+p13 = plotrose(alldata%>%filter(name == order[13]))
+p14 = plotrose(alldata%>%filter(name == order[14]))
+p15 = plotrose(alldata%>%filter(name == order[15]))
+p16 = plotrose(alldata%>%filter(name == order[16]))
+p17 = plotrose(alldata%>%filter(name == order[17]))
+p18 = plotrose(alldata%>%filter(name == order[18]))
+p19 = plotrose(alldata%>%filter(name == order[19]))
+p20 = plotrose(alldata%>%filter(name == order[20]))
+
+p21 = plotrose(alldata%>%filter(name == order[21]))
+p22 = plotrose(alldata%>%filter(name == order[22]))
+p23 = plotrose(alldata%>%filter(name == order[23]))
+p24 = plotrose(alldata%>%filter(name == order[24]))
+p25 = plotrose(alldata%>%filter(name == order[25]))
+p26 = plotrose(alldata%>%filter(name == order[26]))
+
+p26_5 = plot_empty(alldata%>%filter(name == order[55]))
+
+p27 = plotrose(alldata%>%filter(name == order[27]))
+p28 = plotrose(alldata%>%filter(name == order[28]))
+p29 = plotrose(alldata%>%filter(name == order[29]))
+p30 = plotrose(alldata%>%filter(name == order[30]))
+
+p31 = plotrose(alldata%>%filter(name == order[31]))
+p32 = plotrose(alldata%>%filter(name == order[32]))
+p33 = plotrose(alldata%>%filter(name == order[33]))
+p34 = plotrose(alldata%>%filter(name == order[34]))
+p35 = plotrose(alldata%>%filter(name == order[35]))
+p36 = plotrose(alldata%>%filter(name == order[36]))
+p37 = plotrose(alldata%>%filter(name == order[37]))
+p38 = plotrose(alldata%>%filter(name == order[38]))
+p39 = plotrose(alldata%>%filter(name == order[39]))
+p40 = plotrose(alldata%>%filter(name == order[40]))
+
+p41 = plotrose(alldata%>%filter(name == order[41]))
+p42 = plotrose(alldata%>%filter(name == order[42]))
+p43 = plotrose(alldata%>%filter(name == order[43]))
+p44 = plotrose(alldata%>%filter(name == order[44]))
+p45 = plotrose(alldata%>%filter(name == order[45]))
+p46 = plotrose(alldata%>%filter(name == order[46]))
+p47 = plotrose(alldata%>%filter(name == order[47]))
+p48 = plotrose(alldata%>%filter(name == order[48]))
+p49 = plotrose(alldata%>%filter(name == order[49]))
+p50 = plotrose(alldata%>%filter(name == order[50]))
+
+p51 = plotrose(alldata%>%filter(name == order[51]))
+p52 = plotrose(alldata%>%filter(name == order[52]))
+p53 = plotrose(alldata%>%filter(name == order[53]))
+p54 = plotrose(alldata%>%filter(name == order[54]))
+
+p56 = plotsg(alldata)
+p56s = plotsgs(alldata)
+
+#ggarrange(p1,p2,p3,p4,p5,p6,p7,p8,p9,p10,
+#          p11,p12,p13,p14,p15,p16,p17,p18,p19,p10,
+#          p21,p22,p23,p24,p25,p26,p27,p28, nrow=7, ncol=4, align = "v")
+
+```
+
+
+```{r}
+#GRAPH FILE
+
+g = ggarrange(p26_5, p1,p2,p3,p4,p5,p6,p7,p8,p9,p10,
+          p11,p12,p13,p14,p15,p16,p17,p18,p19,p20,
+          p21,p22,p23,p24,p25,p26,p27,p28,p29,p30,
+          p31,p32,p33,p34,p35,p36,p37,p38,p39,p40,
+          p41,p42,p43,p44,p45,p46,p47,p48,p49,p50,
+          p51,p52,p53,p54,p56, nrow=7, ncol=8, align = "v")
+
+#------INTERNAL CIRCULATION
+
+tiff(filename="CLC test.tiff", width=30, height=28, units="in",
+     pointsize=5, compression="lzw", bg="white", res=600,
+     restoreConsole=TRUE)
+  g
+dev.off()
+
+```
+

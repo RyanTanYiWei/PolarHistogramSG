@@ -1,0 +1,481 @@
+---
+title: "Polar Histogram DGP"
+output: html_document
+---
+
+Clear 
+```{r}
+rm(list = ls())
+```
+
+Library
+```{r}
+library(grid)
+library(png)
+library(magick)
+library(tidyverse)
+library(dplyr)
+
+#spatial
+library(rgdal)
+library(sp)
+library(spdplyr)
+library(raster)
+library(terra)
+library(sf)
+library(rgeos)
+```
+
+# 1 Read Street Network (with labelled boundaries - DGP + Electorial)
+```{r}
+snet = readOGR("Data/snet_elec_dgp.mif", verbose = FALSE)
+```
+
+# 2 Divide Street Network by Boundaries (DGP)
+```{r}
+#get list of zones
+snet.df = as.data.frame(snet)
+zonelists = unique(snet.df$PLN_AREA_N)
+
+#remove empty zone
+zonelist = zonelists[zonelists != ""]
+zonelist = zonelist[order(zonelist)]
+zonelines = c()
+
+for (zone in zonelist){
+  entry = snet %>% filter(PLN_AREA_N == zone)
+  zonelines = c(zonelines, entry)
+}
+
+#Print List of DGP Zones
+zonelines
+```
+
+Processing: Matrix functions for Angle Calculation
+```{r}
+lengt = function(c){
+  (((c[1,1]-c[1,2])^2) + ((c[2,1]-c[2,2])^2))^0.5
+}
+angle = function(c){
+  x1 = c[1,1]
+  x2 = c[2,1]
+  y1 = c[1,2]
+  y2 = c[2,2]
+  atan2(x2-x1,y1-y2)
+}
+```
+
+Processing: Compute Angles in Dataframe (,1 = x    ,2 = y)
+```{r}
+calculate = function(snet){
+  #test 1 coordinate
+  #snet@lines[[4655]]@Lines[[1]]@coords
+  
+  no.feat = nrow(as.data.frame(snet))
+  len = c()
+  ang = c()
+  no = c(1:no.feat)
+  
+  for (i in 1:no.feat){
+    z = snet@lines[[i]]@Lines[[1]]@coords
+    len = c(len, lengt(z))
+    
+    #Change angle to b
+    a = as.double(paste(angle(z)))
+    a = ( (a * 180) / (pi) ) + 90
+    if (a>360){
+      a = a-360
+    }
+    if (a<0){
+      a = -a
+    }
+    ang = c(ang, a)
+  }
+  
+  df = data.frame(no,len,ang)
+  #df %>% arrange(rev(ang))
+  #df %>% arrange(ang)
+  
+  #mirror across
+  df1 = df
+  ang = sapply(df1$ang+180, function (x) ifelse(x>=355,x-360,x))
+  df2 = data.frame(no,len,ang)
+  df3 = rbind(df1,df2)
+  
+  #df3 %>% arrange(rev(ang))
+  #df3 %>% arrange(ang)
+  return(df3)
+}
+```
+
+# 4 Compile Data and Process Angles for each Zone's Network
+```{r}
+alldata = data.frame()
+
+for (i in 1:length(zonelines)){
+  lines = zonelines[[i]]
+  dataline = calculate(lines)
+  dataline$name = zonelist[i]
+  alldata = rbind(alldata,dataline)
+}
+
+```
+
+# 5 Binning and Calculation of Basic Network Entropy Measures
+```{r}
+#break all data into bins
+alldata$bin <- cut(alldata$ang, breaks = seq(0, 360, by = 10), labels = 0:35)
+
+#create df to store metrics
+metrics = data.frame(DGP = zonelist, Ho = NaN, Hw = NaN, phi = NaN)
+
+for (x in 1:length(zonelist)){
+  loc =  zonelist[x]
+
+  #filter all data by zones
+  e = alldata %>% filter(name == loc)
+  
+  #compute data
+  total_street =  nrow(e)
+  total_length = sum(e$len)
+  Ho = 0
+  Hw = 0 
+  for (i in 0:35){
+    #calculate PROPORTION of this orientation Ho
+    P_o = nrow(e %>% filter(bin == i)) / total_street
+    H_o = P_o * log(P_o)
+    #replace NaN with 0 : bin is not occupied at all
+    H_o = replace(H_o, is.na(H_o), 0)
+    Ho = Ho - H_o
+    
+    #calculate PROPORTION of weighted orientation(by length)
+    P_w = sum(e %>% filter(bin == i) %>% .$len) / total_length
+    H_w = P_w * log(P_w)
+    H_w = replace(H_w, is.na(H_w), 0)
+    Hw = Hw - H_w
+  }
+  
+  #input metrics
+  metrics[x,]$Ho = Ho
+  metrics[x,]$Hw = Hw
+  Hmax = log(36)
+  Hg = log(4)
+  metrics[x,]$phi = 1 - ( (Ho - Hg)/ (Hmax - Hg) )^2
+}
+
+metrics %>% arrange(desc(phi))  #print entropy measures
+
+order = metrics %>% arrange(desc(phi)) %>% .$DGP
+```
+
+Plot Function: Default (By Zone) Rose Diagram
+```{r}
+plotrose = function(df3){
+  ggplot(df3, aes(x = ang)) +
+  geom_histogram(breaks = ((0:36 - 0.5)/36 * 360), fill = 'lightblue', color= 'black', closed = "right") +
+  scale_x_continuous(
+    breaks = 0:3/4*360, 
+    labels = c("N", "E", "S", "W")
+    
+    ) +
+  coord_polar(start=-pi/36) +
+    
+    xlab(NULL)+ylab(NULL) +
+    theme(axis.text.y = element_blank(),
+          axis.ticks.y = element_blank()) +
+    #theme_bw()
+    
+     theme(axis.text = element_text(size = rel(0.7)),
+           axis.ticks = element_line(colour = "black"),
+           legend.key = element_rect(colour = "grey80"),
+           panel.background = element_rect(fill = "white", colour = NA),
+           panel.border = element_rect(fill = NA, colour = "grey50"),
+           panel.grid.major = element_line(colour = "grey90", size = 0.2),
+           panel.grid.minor = element_line(colour = "grey98", size = 0.5),
+           strip.background = element_rect(fill = "grey80", colour = "grey50"))+ggtitle(paste0(df3$name[1]," | ",nrow(df3)/2))
+}
+
+#plotrose(alldata%>%filter(name == order[1]))
+```
+
+Plot Function: (Singapore) Rose Diagram
+```{r}
+plotsg = function(df3){
+  ggplot(df3, aes(x = ang)) +
+  geom_histogram(breaks = ((0:36 - 0.5)/36 * 360), fill = 'lightblue', color= 'black', closed = "right") +
+  scale_x_continuous(
+    breaks = 0:3/4*360, 
+    labels = c("N", "E", "S", "W")
+    ) +
+    
+  coord_polar(start=-pi/36) +
+    
+    xlab(NULL)+ylab(NULL) +
+    theme(axis.text.y = element_blank(),
+          axis.ticks.y = element_blank()) +
+    #theme_bw()
+    
+     theme(axis.text = element_text(size = rel(0.7)),
+           axis.ticks = element_line(colour = "black"),
+           legend.key = element_rect(colour = "grey80"),
+           panel.background = element_rect(fill = "white", colour = NA),
+           panel.border = element_rect(fill = NA, colour = "grey50"),
+           panel.grid.major = element_line(colour = "grey90", size = 0.2),
+           panel.grid.minor = element_line(colour = "grey98", size = 0.5),
+           strip.background = element_rect(fill = "grey80", colour = "grey50"))+ggtitle(paste0("SINGAPORE | ",nrow(df3)/2))
+}
+```
+
+Plot Function: (Singapore) Rose Diagram without Ticks
+```{r}
+plotsg_wt = function(df3){
+  ggplot(df3, aes(x = ang)) +
+  geom_histogram(breaks = ((0:36 - 0.5)/36 * 360), fill = 'lightblue', color= 'black', closed = "right") +
+  scale_x_continuous(
+    breaks = 0:3/4*360, 
+    labels = c("N", "E", "S", "W")
+    ) +
+    
+    coord_polar(start=-pi/36) +
+    
+    xlab(NULL)+ylab(NULL) +
+    theme(axis.text.y = element_blank(),
+          axis.ticks.y = element_blank(),
+          axis.ticks.x = element_blank(),
+          axis.text.x = element_blank()) +
+    #theme_bw()
+    
+     theme(axis.text = element_text(size = rel(0.7)),
+           axis.ticks = element_line(colour = "black"),
+           legend.key = element_rect(colour = "grey80"),
+           panel.background = element_rect(fill = "white", colour = NA),
+           panel.border = element_rect(fill = NA, colour = "grey50"),
+           panel.grid.major = element_line(colour = "grey90", size = 0.2),
+           panel.grid.minor = element_line(colour = "grey98", size = 0.5),
+           strip.background = element_rect(fill = "grey80", colour = "grey50"))+ggtitle(paste0("SINGAPORE | ",nrow(df3)/2))
+}
+
+```
+
+Function: Empty Rose Diagram
+```{r}
+plot_empty = function(df3){
+  ggplot(df3, aes(x = ang)) +
+    geom_histogram(binwidth = 10, boundary = 0, fill = 'lightblue', color= 'black', closed = "right") +
+    scale_x_continuous(breaks=seq(0,360,90), limits=c(0,360)) +
+    coord_polar(theta="x", start=3*pi/2, direction=-1) +
+    xlab(NULL)+ylab(NULL) +
+    theme(axis.text.y = element_blank(),
+          axis.ticks.y = element_blank(),
+          axis.ticks.x = element_blank(),
+          axis.text.x = element_blank()) +
+    #theme_bw()
+    
+     theme(axis.text = element_text(size = rel(0.7)),
+           axis.ticks = element_line(colour = "black"),
+           legend.key = element_rect(colour = "grey80"),
+           panel.background = element_rect(fill = "white", colour = NA),
+           panel.border = element_rect(fill = NA, colour = "grey50"),
+           panel.grid.major = element_line(colour = "grey90", size = 0.2),
+           panel.grid.minor = element_line(colour = "grey98", size = 0.5),
+           strip.background = element_rect(fill = "grey80", colour = "grey50"))+ggtitle(paste0("NORTH-EASTERN ISLANDS | ",nrow(df3)/2))
+}
+
+#plot_empty(alldata%>%filter(name == zonelist[55]))
+```
+
+# 6 Compute All Plots
+
+By Entropy
+```{r}
+library(ggpubr)
+
+p1 = plotrose(alldata%>%filter(name == order[1]))
+p2 = plotrose(alldata%>%filter(name == order[2]))
+p3 = plotrose(alldata%>%filter(name == order[3]))
+p4 = plotrose(alldata%>%filter(name == order[4]))
+p5 = plotrose(alldata%>%filter(name == order[5]))
+p6 = plotrose(alldata%>%filter(name == order[6]))
+p7 = plotrose(alldata%>%filter(name == order[7]))
+p8 = plotrose(alldata%>%filter(name == order[8]))
+p9 = plotrose(alldata%>%filter(name == order[9]))
+p10 = plotrose(alldata%>%filter(name == order[10]))
+
+p11 = plotrose(alldata%>%filter(name == order[11]))
+p12 = plotrose(alldata%>%filter(name == order[12]))
+p13 = plotrose(alldata%>%filter(name == order[13]))
+p14 = plotrose(alldata%>%filter(name == order[14]))
+p15 = plotrose(alldata%>%filter(name == order[15]))
+p16 = plotrose(alldata%>%filter(name == order[16]))
+p17 = plotrose(alldata%>%filter(name == order[17]))
+p18 = plotrose(alldata%>%filter(name == order[18]))
+p19 = plotrose(alldata%>%filter(name == order[19]))
+p20 = plotrose(alldata%>%filter(name == order[20]))
+
+p21 = plotrose(alldata%>%filter(name == order[21]))
+p22 = plotrose(alldata%>%filter(name == order[22]))
+p23 = plotrose(alldata%>%filter(name == order[23]))
+p24 = plotrose(alldata%>%filter(name == order[24]))
+p25 = plotrose(alldata%>%filter(name == order[25]))
+p26 = plotrose(alldata%>%filter(name == order[26]))
+p27 = plotrose(alldata%>%filter(name == order[27]))
+p28 = plotrose(alldata%>%filter(name == order[28]))
+p29 = plotrose(alldata%>%filter(name == order[29]))
+p30 = plotrose(alldata%>%filter(name == order[30]))
+
+p31 = plotrose(alldata%>%filter(name == order[31]))
+p32 = plotrose(alldata%>%filter(name == order[32]))
+p33 = plotrose(alldata%>%filter(name == order[33]))
+p34 = plotrose(alldata%>%filter(name == order[34]))
+p35 = plotrose(alldata%>%filter(name == order[35]))
+p36 = plotrose(alldata%>%filter(name == order[36]))
+p37 = plotrose(alldata%>%filter(name == order[37]))
+p38 = plotrose(alldata%>%filter(name == order[38]))
+p39 = plotrose(alldata%>%filter(name == order[39]))
+p40 = plotrose(alldata%>%filter(name == order[40]))
+
+p41 = plotrose(alldata%>%filter(name == order[41]))
+p42 = plotrose(alldata%>%filter(name == order[42]))
+p43 = plotrose(alldata%>%filter(name == order[43]))
+p44 = plotrose(alldata%>%filter(name == order[44]))
+p45 = plotrose(alldata%>%filter(name == order[45]))
+p46 = plotrose(alldata%>%filter(name == order[46]))
+p47 = plotrose(alldata%>%filter(name == order[47]))
+p48 = plotrose(alldata%>%filter(name == order[48]))
+p49 = plotrose(alldata%>%filter(name == order[49]))
+p50 = plotrose(alldata%>%filter(name == order[50]))
+
+p51 = plotrose(alldata%>%filter(name == order[51]))
+p52 = plotrose(alldata%>%filter(name == order[52]))
+p53 = plotrose(alldata%>%filter(name == order[53]))
+p54 = plotrose(alldata%>%filter(name == order[54]))
+
+p55 = plotsg(alldata) #Full Singapore Model
+p0 = plot_empty(alldata%>%filter(name == order[55])) #If Empty is needed
+
+#Arranging Multiplot
+g_entropy_hz = ggarrange(p1,p2,p3,p4,p5,p6,p7,p8,p9,p10,
+          p11,p12,p13,p14,p15,p16,p17,p18,p19,p20,
+          p21,p22,p23,p24,p25,p26,p27,p28,p29,p30,
+          p31,p32,p33,p34,p35,p36,p37,p38,p39,p40,
+          p41,p42,p43,p44,p45,p46,p47,p48,p49,p50,
+          p51,p52,p53,p54,p55, nrow=5, ncol=11, align = "v")
+
+g_entropy_vt = ggarrange(p1,p2,p3,p4,p5,p6,p7,p8,p9,p10,
+          p11,p12,p13,p14,p15,p16,p17,p18,p19,p20,
+          p21,p22,p23,p24,p25,p26,p27,p28,p29,p30,
+          p31,p32,p33,p34,p35,p36,p37,p38,p39,p40,
+          p41,p42,p43,p44,p45,p46,p47,p48,p49,p50,
+          p51,p52,p53,p54,p55, nrow=11, ncol=5, align = "v")
+
+```
+
+By Name
+```{r}
+n1 = plotrose(alldata%>%filter(name == zonelist[1]))
+n2 = plotrose(alldata%>%filter(name == zonelist[2]))
+n3 = plotrose(alldata%>%filter(name == zonelist[3]))
+n4 = plotrose(alldata%>%filter(name == zonelist[4]))
+n5 = plotrose(alldata%>%filter(name == zonelist[5]))
+n6 = plotrose(alldata%>%filter(name == zonelist[6]))
+n7 = plotrose(alldata%>%filter(name == zonelist[7]))
+n8 = plotrose(alldata%>%filter(name == zonelist[8]))
+n9 = plotrose(alldata%>%filter(name == zonelist[9]))
+n10 = plotrose(alldata%>%filter(name == zonelist[10]))
+
+n11 = plotrose(alldata%>%filter(name == zonelist[11]))
+n12 = plotrose(alldata%>%filter(name == zonelist[12]))
+n13 = plotrose(alldata%>%filter(name == zonelist[13]))
+n14 = plotrose(alldata%>%filter(name == zonelist[14]))
+n15 = plotrose(alldata%>%filter(name == zonelist[15]))
+n16 = plotrose(alldata%>%filter(name == zonelist[16]))
+n17 = plotrose(alldata%>%filter(name == zonelist[17]))
+n18 = plotrose(alldata%>%filter(name == zonelist[18]))
+n19 = plotrose(alldata%>%filter(name == zonelist[19]))
+n20 = plotrose(alldata%>%filter(name == zonelist[20]))
+
+n21 = plotrose(alldata%>%filter(name == zonelist[21]))
+n22 = plotrose(alldata%>%filter(name == zonelist[22]))
+n23 = plotrose(alldata%>%filter(name == zonelist[23]))
+n24 = plotrose(alldata%>%filter(name == zonelist[24]))
+n25 = plotrose(alldata%>%filter(name == zonelist[25]))
+n26 = plotrose(alldata%>%filter(name == zonelist[26]))
+n27 = plotrose(alldata%>%filter(name == zonelist[27]))
+n28 = plotrose(alldata%>%filter(name == zonelist[28]))
+n29 = plotrose(alldata%>%filter(name == zonelist[29]))
+n30 = plotrose(alldata%>%filter(name == zonelist[30]))
+
+n31 = plotrose(alldata%>%filter(name == zonelist[31]))
+n32 = plotrose(alldata%>%filter(name == zonelist[32]))
+n33 = plotrose(alldata%>%filter(name == zonelist[33]))
+n34 = plotrose(alldata%>%filter(name == zonelist[34]))
+n35 = plotrose(alldata%>%filter(name == zonelist[35]))
+n36 = plotrose(alldata%>%filter(name == zonelist[36]))
+n37 = plotrose(alldata%>%filter(name == zonelist[37]))
+n38 = plotrose(alldata%>%filter(name == zonelist[38]))
+n39 = plotrose(alldata%>%filter(name == zonelist[39]))
+n40 = plotrose(alldata%>%filter(name == zonelist[40]))
+
+n41 = plotrose(alldata%>%filter(name == zonelist[41]))
+n42 = plotrose(alldata%>%filter(name == zonelist[42]))
+n43 = plotrose(alldata%>%filter(name == zonelist[43]))
+n44 = plotrose(alldata%>%filter(name == zonelist[44]))
+n45 = plotrose(alldata%>%filter(name == zonelist[45]))
+n46 = plotrose(alldata%>%filter(name == zonelist[46]))
+n47 = plotrose(alldata%>%filter(name == zonelist[47]))
+n48 = plotrose(alldata%>%filter(name == zonelist[48]))
+n49 = plotrose(alldata%>%filter(name == zonelist[49]))
+n50 = plotrose(alldata%>%filter(name == zonelist[50]))
+
+n51 = plotrose(alldata%>%filter(name == zonelist[51]))
+n52 = plotrose(alldata%>%filter(name == zonelist[52]))
+n53 = plotrose(alldata%>%filter(name == zonelist[53]))
+n54 = plotrose(alldata%>%filter(name == zonelist[54]))
+
+n55 = plotsg(alldata)
+n0 = plot_empty(alldata%>%filter(name == zonelist[55]))
+
+
+g_name_hz = ggarrange(n1,n2,n3,n4,n5,n6,n7,n8,n9,n10,
+          n11,n12,n13,n14,n15,n16,n17,n18,n19,n20,
+          n21,n22,n23,n24,n25,n26,n27,n28,n29,n30,
+          n31,n32,n33,n34,n35,n36,n37,n38,n39,n40,
+          n41,n42,n43,n44,n45,n46,n47,n48,n49,n50,
+          n51,n52,n53,n54,n55, nrow=5, ncol=11, align = "v")
+
+g_name_vt = ggarrange(n1,n2,n3,n4,n5,n6,n7,n8,n9,n10,
+          n11,n12,n13,n14,n15,n16,n17,n18,n19,n20,
+          n21,n22,n23,n24,n25,n26,n27,n28,n29,n30,
+          n31,n32,n33,n34,n35,n36,n37,n38,n39,n40,
+          n41,n42,n43,n44,n45,n46,n47,n48,n49,n50,
+          n51,n52,n53,n54,n55, nrow=11, ncol=5, align = "v")
+
+```
+
+# 7 Generating TIFFs
+```{r}
+tiff(filename="OutputVisuals/byEntropy5x11.tiff", width=40, height=22.5, units="in",
+     pointsize=5, compression="lzw", bg="white", res=600,
+     restoreConsole=TRUE)
+g_entropy_hz
+dev.off()
+
+tiff(filename="OutputVisuals/byEntropy11x5.tiff", width=19, height=40, units="in",
+     pointsize=5, compression="lzw", bg="white", res=600,
+     restoreConsole=TRUE)
+g_entropy_vt
+dev.off()
+
+tiff(filename="OutputVisuals/byName5x11.tiff", width = 40, height=22.5, units="in",
+     pointsize=5, compression="lzw", bg="white", res=600,
+     restoreConsole=TRUE)
+  g_name_hz
+dev.off()
+
+tiff(filename="OutputVisuals/byName11x5.tiff", width = 19, height=40, units="in",
+     pointsize=5, compression="lzw", bg="white", res=600,
+     restoreConsole=TRUE)
+  g_name_vt
+dev.off()
+```
+

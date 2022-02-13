@@ -1,0 +1,408 @@
+---
+title: "Untitled"
+output: html_document
+---
+
+Clear 
+```{r}
+rm(list = ls())
+```
+
+
+```{r}
+library(grid)
+library(png)
+library(magick)
+library(tidyverse)
+library(dplyr)
+
+#spatial
+library(rgdal)
+library(sp)
+library(spdplyr)
+library(raster)
+library(terra)
+library(sf)
+library(rgeos)
+```
+
+
+```{r}
+#read network
+snet = readOGR("snet (labelled zones)_final.mif", verbose = FALSE)
+
+#read boundary
+#bound = readOGR("boundary.mif", verbose = FALSE)
+
+#plot test
+#plot(bound)
+#plot(snet,add= TRUE, col= "Red")
+plot(snet)
+```
+
+
+
+#Break Singapore Map into PLots
+
+```{r}
+#get list of zones
+snet.df = as.data.frame(snet)
+zonelists = unique(snet.df$Name)
+zonelists
+
+#remove empty zone
+zonelist = zonelists[zonelists != ""]
+zonelist = zonelist[order(zonelist)]
+zonelines = c()
+
+for (zone in zonelist){
+  entry = snet %>% filter(Name == zone)
+  zonelines = c(zonelines, entry)
+}
+
+#zonelines
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Function: Matrix functions for Angle Calculation
+```{r}
+lengt = function(c){
+  (((c[1,1]-c[1,2])^2) + ((c[2,1]-c[2,2])^2))^0.5
+}
+angle = function(c){
+  x1 = c[1,1]
+  x2 = c[2,1]
+  y1 = c[1,2]
+  y2 = c[2,2]
+  atan2(x2-x1,y1-y2)
+}
+```
+
+Function: Calculate Dataframe for Angles
+,1 = x    ,2 = y
+```{r}
+
+calculate = function(snet){
+  #test 1 coordinate
+  #snet@lines[[4655]]@Lines[[1]]@coords
+  
+  no.feat = nrow(as.data.frame(snet))
+  len = c()
+  ang = c()
+  no = c(1:no.feat)
+  
+  for (i in 1:no.feat){
+    z = snet@lines[[i]]@Lines[[1]]@coords
+    len = c(len, lengt(z))
+    
+    #Change angle to b
+    a = as.double(paste(angle(z)))
+    a = ( (a * 180) / (pi) ) + 90
+    if (a>360){
+      a = a-360
+    }
+    if (a<0){
+      a = -a
+    }
+    ang = c(ang, a)
+  }
+  
+  df = data.frame(no,len,ang)
+  #df %>% arrange(rev(ang))
+  #df %>% arrange(ang)
+  
+  
+  #mirror across
+  df1 = df
+  ang = sapply(df1$ang+180, function (x) ifelse(x>=360,x-360,x))
+  df2 = data.frame(no,len,ang)
+  df3 = rbind(df1,df2)
+  
+  #df3 %>% arrange(rev(ang))
+  #df3 %>% arrange(ang)
+  return(df3)
+}
+```
+
+Compile Data and Process Angles for each network
+```{r}
+alldata = data.frame()
+
+for (i in 1:length(zonelines)){
+  lines = zonelines[[i]]
+  dataline = calculate(lines)
+  dataline$name = zonelist[i]
+  alldata = rbind(alldata,dataline)
+}
+
+#plotrose(calculate(zonelines[[16]]))
+```
+
+Function: Plot Rose Diagram
+```{r}
+plotrose = function(df3){
+  ggplot(df3, aes(x = ang)) +
+    geom_histogram(binwidth = 10, boundary = 0, fill = 'lightblue', color= 'black', closed = "right") +
+    scale_x_continuous(breaks=seq(0,360,90), limits=c(0,360)) +
+    coord_polar(theta="x", start=3*pi/2, direction=-1) +
+    xlab(NULL)+ylab(NULL) +
+    theme(axis.text.y = element_blank(),
+          axis.ticks.y = element_blank()) +
+    #theme_bw()
+    
+     theme(axis.text = element_text(size = rel(0.7)),
+           axis.ticks = element_line(colour = "black"),
+           legend.key = element_rect(colour = "grey80"),
+           panel.background = element_rect(fill = "white", colour = NA),
+           panel.border = element_rect(fill = NA, colour = "grey50"),
+           panel.grid.major = element_line(colour = "grey90", size = 0.2),
+           panel.grid.minor = element_line(colour = "grey98", size = 0.5),
+           strip.background = element_rect(fill = "grey80", colour = "grey50"))+ggtitle(paste0(df3$name[1]," | ",nrow(df3)/2))
+}
+#df3
+#plotrose(df3)
+```
+
+Function: Plot Singapore Rose Diagram
+```{r}
+plotsg = function(df3){
+  ggplot(df3, aes(x = ang)) +
+    geom_histogram(binwidth = 10, boundary = 0, fill = 'lightblue', color= 'black', closed = "right") +
+    scale_x_continuous(breaks=seq(0,360,90), limits=c(0,360)) +
+    coord_polar(theta="x", start=3*pi/2, direction=-1) +
+    xlab(NULL)+ylab(NULL) +
+    theme(axis.text.y = element_blank(),
+          axis.ticks.y = element_blank()) +
+    #theme_bw()
+    
+     theme(axis.text = element_text(size = rel(0.7)),
+           axis.ticks = element_line(colour = "black"),
+           legend.key = element_rect(colour = "grey80"),
+           panel.background = element_rect(fill = "white", colour = NA),
+           panel.border = element_rect(fill = NA, colour = "grey50"),
+           panel.grid.major = element_line(colour = "grey90", size = 0.2),
+           panel.grid.minor = element_line(colour = "grey98", size = 0.5),
+           strip.background = element_rect(fill = "grey80", colour = "grey50"))+ggtitle(paste0("SINGAPORE | ",nrow(df3)/2))
+}
+```
+
+Function: Plot Singapore Rose Diagram (remove Singapore's tix)
+```{r}
+plotsgs = function(df3){
+  ggplot(df3, aes(x = ang)) +
+    geom_histogram(binwidth = 10, boundary = 0, fill = 'lightblue', color= 'black', closed = "right") +
+    scale_x_continuous(breaks=seq(0,360,90), limits=c(0,360)) +
+    coord_polar(theta="x", start=3*pi/2, direction=-1) +
+    xlab(NULL)+ylab(NULL) +
+    theme(axis.text.y = element_blank(),
+          axis.ticks.y = element_blank(),
+          axis.ticks.x = element_blank(),
+          axis.text.x = element_blank()) +
+    #theme_bw()
+    
+     theme(axis.text = element_text(size = rel(0.7)),
+           axis.ticks = element_line(colour = "black"),
+           legend.key = element_rect(colour = "grey80"),
+           panel.background = element_rect(fill = "white", colour = NA),
+           panel.border = element_rect(fill = NA, colour = "grey50"),
+           panel.grid.major = element_line(colour = "grey90", size = 0.2),
+           panel.grid.minor = element_line(colour = "grey98", size = 0.5),
+           strip.background = element_rect(fill = "grey80", colour = "grey50"))+ggtitle(paste0("SINGAPORE | ",nrow(df3)/2))
+}
+
+```
+
+Plot Everything
+```{r}
+library(ggpubr)
+
+p1 = plotrose(alldata%>%filter(name == zonelist[1]))
+p2 = plotrose(alldata%>%filter(name == zonelist[2]))
+p3 = plotrose(alldata%>%filter(name == zonelist[3]))
+p4 = plotrose(alldata%>%filter(name == zonelist[4]))
+p5 = plotrose(alldata%>%filter(name == zonelist[5]))
+p6 = plotrose(alldata%>%filter(name == zonelist[6]))
+p7 = plotrose(alldata%>%filter(name == zonelist[7]))
+p8 = plotrose(alldata%>%filter(name == zonelist[8]))
+p9 = plotrose(alldata%>%filter(name == zonelist[9]))
+p10 = plotrose(alldata%>%filter(name == zonelist[10]))
+
+p11 = plotrose(alldata%>%filter(name == zonelist[11]))
+p12 = plotrose(alldata%>%filter(name == zonelist[12]))
+p13 = plotrose(alldata%>%filter(name == zonelist[13]))
+p14 = plotrose(alldata%>%filter(name == zonelist[14]))
+p15 = plotrose(alldata%>%filter(name == zonelist[15]))
+p16 = plotrose(alldata%>%filter(name == zonelist[16]))
+p17 = plotrose(alldata%>%filter(name == zonelist[17]))
+p18 = plotrose(alldata%>%filter(name == zonelist[18]))
+p19 = plotrose(alldata%>%filter(name == zonelist[19]))
+p20 = plotrose(alldata%>%filter(name == zonelist[20]))
+
+p21 = plotrose(alldata%>%filter(name == zonelist[21]))
+p22 = plotrose(alldata%>%filter(name == zonelist[22]))
+p23 = plotrose(alldata%>%filter(name == zonelist[23]))
+p24 = plotrose(alldata%>%filter(name == zonelist[24]))
+p25 = plotrose(alldata%>%filter(name == zonelist[25]))
+p26 = plotrose(alldata%>%filter(name == zonelist[26]))
+p27 = plotrose(alldata%>%filter(name == zonelist[27]))
+p28 = plotrose(alldata%>%filter(name == zonelist[28]))
+p29 = plotrose(alldata%>%filter(name == zonelist[29]))
+p30 = plotrose(alldata%>%filter(name == zonelist[30]))
+
+p31 = plotrose(alldata%>%filter(name == zonelist[31]))
+p32 = plotsg(alldata)
+p32s = plotsgs(alldata)
+
+#ggarrange(p1,p2,p3,p4,p5,p6,p7,p8,p9,p10,
+#          p11,p12,p13,p14,p15,p16,p17,p18,p19,p10,
+#          p21,p22,p23,p24,p25,p26,p27,p28, nrow=7, ncol=4, align = "v")
+
+```
+
+```{r}
+
+#------HIGHEST RES
+
+tiff(filename="20x40 (internal_highres).tiff", width=20, height=40, units="in",
+     pointsize=1.5, compression="lzw", bg="white", res=600,
+     restoreConsole=TRUE)
+ggarrange(p1,p2,p3,p4,p5,p6,p7,p8,p9,p10,
+          p11,p12,p13,p14,p15,p16,p17,p18,p19,p20,
+          p21,p22,p23,p24,p25,p26,p27,p28,p29,p30,
+          p31,p32, nrow=8, ncol=4, align = "v")
+dev.off()
+
+
+#------INTERNAL CIRCULATION
+
+tiff(filename="(internal) 15x33.tiff", width=15, height=33, units="in",
+     pointsize=5, compression="lzw", bg="white", res=600,
+     restoreConsole=TRUE)
+ggarrange(p1,p2,p3,p4,p5,p6,p7,p8,p9,p10,
+          p11,p12,p13,p14,p15,p16,p17,p18,p19,p20,
+          p21,p22,p23,p24,p25,p26,p27,p28,p29,p30,
+          p31,p32, nrow=8, ncol=4, align = "v")
+dev.off()
+
+
+tiff(filename="(internal) 15x33_water.tiff", width=15, height=33, units="in",
+     pointsize=5, compression="lzw", bg="white", res=600,
+     restoreConsole=TRUE)
+ggarrange(p1,p2,p3,p4,p5,p6,p7,p8,p9,p10,
+          p11,p12,p13,p14,p15,p16,p17,p18,p19,p20,
+          p21,p22,p23,p24,p25,p26,p27,p28,p29,p30,
+          p31,p32, nrow=8, ncol=4, align = "v") +
+   annotate("text", x = Inf, y = -Inf, label = "©ryan_placesspaces",
+            hjust=1.1, vjust=-1.1, col="darkgrey", cex=4,
+            fontface = "bold", alpha = 0.8)
+dev.off()
+
+#------INTERNAL CIRCULATION
+
+tiff(filename="(internal) 12x27.tiff", width=12, height=27, units="in",
+     pointsize=5, compression="lzw", bg="white", res=600,
+     restoreConsole=TRUE)
+ggarrange(p1,p2,p3,p4,p5,p6,p7,p8,p9,p10,
+          p11,p12,p13,p14,p15,p16,p17,p18,p19,p20,
+          p21,p22,p23,p24,p25,p26,p27,p28,p29,p30,
+          p31,p32, nrow=8, ncol=4, align = "v")
+dev.off()
+
+
+tiff(filename="(internal) 12x27_water.tiff", width=12, height=27, units="in",
+     pointsize=5, compression="lzw", bg="white", res=600,
+     restoreConsole=TRUE)
+ggarrange(p1,p2,p3,p4,p5,p6,p7,p8,p9,p10,
+          p11,p12,p13,p14,p15,p16,p17,p18,p19,p20,
+          p21,p22,p23,p24,p25,p26,p27,p28,p29,p30,
+          p31,p32, nrow=8, ncol=4, align = "v") +
+   annotate("text", x = Inf, y = -Inf, label = "©ryan_placesspaces",
+            hjust=1.1, vjust=-1.1, col="darkgrey", cex=4,
+            fontface = "bold", alpha = 0.8)
+dev.off()
+
+
+
+#------External CIRCULATION
+
+jpeg(filename="(public) 800x1760_water.jpeg", width=800, height=1760, units="px",
+     pointsize=50, quality=100,bg="White",
+     restoreConsole=TRUE)
+ggarrange(p1,p2,p3,p4,p5,p6,p7,p8,p9,p10,
+          p11,p12,p13,p14,p15,p16,p17,p18,p19,p20,
+          p21,p22,p23,p24,p25,p26,p27,p28,p29,p30,
+          p31,p32s, nrow=8, ncol=4, align = "v") +
+   annotate("text", x = Inf, y = -Inf, label = "©ryan_placesspaces",
+            hjust=1.1, vjust=-1.1, col="darkgrey", cex=6,
+            fontface = "bold", alpha = 0.8)
+dev.off()
+
+
+png(filename="(public) 800x1760_water.png", width=800, height=1760, units="px",
+     pointsize=50,bg="White",
+     restoreConsole=TRUE)
+ggarrange(p1,p2,p3,p4,p5,p6,p7,p8,p9,p10,
+          p11,p12,p13,p14,p15,p16,p17,p18,p19,p20,
+          p21,p22,p23,p24,p25,p26,p27,p28,p29,p30,
+          p31,p32s, nrow=8, ncol=4, align = "v") +
+   annotate("text", x = Inf, y = -Inf, label = "©ryan_placesspaces",
+            hjust=1.05, vjust=-1, col="darkgray", cex=8,
+            fontface = "bold", alpha = 0.8)
+dev.off()
+
+
+```
+
+
+Phone Wallpaper 1170 x 2532
+```{r}
+
+jpeg(filename="(iphone) 1170x2532_water.jpeg", width=1170, height=2532, units="px",
+     pointsize=50, quality=100,bg="White",
+     restoreConsole=TRUE)
+ggarrange(p1,p2,p3,p4,p5,p6,p7,p8,p9,p10,
+          p11,p12,p13,p14,p15,p16,p17,p18,p19,p20,
+          p21,p22,p23,p24,p25,p26,p27,p28,p29,p30,
+          p31,p32s, nrow=8, ncol=4, align = "v") +
+   annotate("text", x = Inf, y = -Inf, label = "©ryan_placesspaces",
+            hjust=1.1, vjust=-1.1, col="darkgrey", cex=6,
+            fontface = "bold", alpha = 0.8)
+dev.off()
+
+```
+19.5:9
+```{r}
+
+
+tiff(filename="(iphone) 117x253.5_.tiff", width=11.7, height=25.35, units="in",
+     pointsize=5, compression="lzw", bg="white", res=600,
+     restoreConsole=TRUE)
+
+ggarrange(p1,p2,p3,p4,p5,p6,p7,p8,p9,p10,
+          p11,p12,p13,p14,p15,p16,p17,p18,p19,p20,
+          p21,p22,p23,p24,p25,p26,p27,p28,p29,p30,
+          p31,p32s, nrow=8, ncol=4, align = "v") +
+   annotate("text", x = Inf, y = -Inf, label = "©ryan_placesspaces",
+            hjust=1.1, vjust=-1.1, col="darkgrey", cex=6,
+            fontface = "bold", alpha = 0.8)
+dev.off()
+
+
+```
