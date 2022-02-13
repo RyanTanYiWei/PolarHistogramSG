@@ -108,7 +108,7 @@ calculate = function(snet){
 }
 ```
 
-# 4 Compile Data and Process Angles for each Zone's Network
+# 3 Compile Data and Process Angles for each Zone's Network
 ```{r}
 alldata = data.frame()
 
@@ -121,7 +121,7 @@ for (i in 1:length(zonelines)){
 
 ```
 
-# 5 Binning and Calculation of Basic Network Entropy Measures
+# 4 Binning and Calculation of Basic Network Entropy Measures
 ```{r}
 #break all data into bins
 alldata$bin <- cut(alldata$ang, breaks = seq(0, 360, by = 10), labels = 0:35)
@@ -284,7 +284,7 @@ plot_empty = function(df3){
 #plot_empty(alldata%>%filter(name == zonelist[55]))
 ```
 
-# 6 Compute All Plots
+# 5 Compute All Plots
 
 By Entropy
 ```{r}
@@ -452,7 +452,7 @@ g_name_vt = ggarrange(n1,n2,n3,n4,n5,n6,n7,n8,n9,n10,
 
 ```
 
-# 7 Generating TIFFs
+# 6 Generating TIFFs
 ```{r}
 tiff(filename="OutputVisuals/byEntropy5x11.tiff", width=40, height=22.5, units="in",
      pointsize=5, compression="lzw", bg="white", res=600,
@@ -479,3 +479,12 @@ tiff(filename="OutputVisuals/byName11x5.tiff", width = 19, height=40, units="in"
 dev.off()
 ```
 
+# X JPEG Sample for ReadMe
+```{r}
+
+jpeg(filename="OutputVisuals/byEntropy5x11_sample.jpeg", width=3200, height=1800, units="px",
+     pointsize=50, quality=100,bg="White",
+     restoreConsole=TRUE)
+  g_entropy_hz
+dev.off()
+```
