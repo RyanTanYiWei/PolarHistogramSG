@@ -486,4 +486,11 @@ jpeg(filename="OutputVisuals/byEntropy11x5_sample.jpeg", width=1400, height=3200
      restoreConsole=TRUE)
   g_entropy_vt
 dev.off()
+
+jpeg(filename="OutputVisuals/byEntropy5x11_sample.jpeg", width=3200, height=1600, units="px",
+     pointsize=50, quality=100,bg="White",
+     restoreConsole=TRUE)
+  g_entropy_hz
+dev.off()
+
 ```
